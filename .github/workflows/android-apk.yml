@@ -11,29 +11,29 @@ permissions:
 jobs:
   android:
     name: Build and upload debug APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      # The GitHub-hosted Ubuntu 24.04 image includes these SDK components and licenses.
+      - name: Verify Android SDK
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar" || { echo '::error::Android SDK platform 35 is missing'; exit 1; }
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt" || { echo '::error::Android build-tools 35.0.0 are missing'; exit 1; }
 
       - name: Install dependencies
         run: npm ci
@@ -48,11 +48,19 @@ jobs:
         run: npx cap sync android
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          set +e
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'import pathlib,sys; text=pathlib.Path(sys.argv[1]).read_text(errors="replace"); marker=text.find("* What went wrong:"); section=text[max(0,marker):max(0,marker)+5000] if marker >= 0 else text[-5000:]; errors="\n".join(line for line in text.splitlines() if " error:" in line or "error: " in line)[-3000:]; message=(errors+"\n"+section).replace("%","%25").replace("\r","%0D").replace("\n","%0A"); print("::error title=Gradle build failed::"+message)' "$RUNNER_TEMP/gradle-build.log"
+            exit "$status"
+          fi
 
       - name: Prepare APK artifact
         run: |
@@ -62,7 +70,7 @@ jobs:
           sha256sum artifacts/21-Code-debug.apk | tee artifacts/SHA256SUMS.txt
 
       - name: Upload installable APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: 21-Code-Android-debug
           path: artifacts/
